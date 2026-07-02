@@ -204,7 +204,7 @@ async def get_state(db: Session = Depends(database.get_db)):
                 metadata=md,
             )
             for actor in resp.actors:
-                actors[actor.actor_id.name] = actor
+                actors[actor.actor_id] = actor
             page_token = resp.next_page_token
             if not page_token:
                 break
