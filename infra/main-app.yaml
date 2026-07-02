@@ -37,6 +37,11 @@ rules:
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
   verbs: ["get", "list", "watch"]
+# The substrate-basic feature deploys agent-substrate CRs (WorkerPool + ActorTemplate,
+# reconciled by the ate-controller) into its target namespace.
+- apiGroups: ["ate.dev"]
+  resources: ["workerpools", "actortemplates"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: ["gateway.networking.k8s.io"]
   resources: ["httproutes", "gateways"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
