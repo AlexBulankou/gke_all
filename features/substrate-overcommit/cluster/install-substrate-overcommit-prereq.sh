@@ -165,9 +165,13 @@ fi
 # --- 7. snapshot bucket ----------------------------------------------------------
 # SuspendActor takes a FULL snapshot; the feature's ActorTemplate points
 # snapshotsConfig.location at gs://${PROJECT_NAME}-substrate-snapshots/. The
-# snapshot read/write happens from the worker node (no Workload Identity on the
-# showcase cluster), so the node service account gets objectAdmin on this one
-# bucket.
+# upload is performed by the atelet DaemonSet (KSA ate-system/atelet). On a
+# cluster WITHOUT Workload Identity the atelet inherits the node service
+# account, so the node SA gets objectAdmin. On a cluster WITH Workload
+# Identity (GKE_METADATA node metadata — e.g. gke-showcase-validation) the
+# atelet's GCS calls carry the WI principal for ns/ate-system/sa/atelet, NOT
+# the node SA, so that principal needs the same grant or every suspend 403s
+# on the snapshot upload and the actor wedges in SUSPENDING.
 note "[7/10] ensuring snapshot bucket gs://${PROJECT_NAME}-substrate-snapshots"
 if ! gcloud storage buckets describe "gs://${PROJECT_NAME}-substrate-snapshots" >/dev/null 2>&1; then
   gcloud storage buckets create "gs://${PROJECT_NAME}-substrate-snapshots" \
@@ -183,6 +187,15 @@ fi
 gcloud storage buckets add-iam-policy-binding \
   "gs://${PROJECT_NAME}-substrate-snapshots" \
   --member "serviceAccount:${NODE_SA}" --role roles/storage.objectAdmin >/dev/null
+WORKLOAD_POOL="$(gcloud container clusters describe "${CLUSTER}" --region "${REGION}" \
+  --project "${PROJECT_NAME}" --format 'value(workloadIdentityConfig.workloadPool)')"
+if [ -n "${WORKLOAD_POOL}" ]; then
+  PROJECT_NUMBER="${PROJECT_NUMBER:-$(gcloud projects describe "${PROJECT_NAME}" --format 'value(projectNumber)')}"
+  gcloud storage buckets add-iam-policy-binding \
+    "gs://${PROJECT_NAME}-substrate-snapshots" \
+    --member "principal://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WORKLOAD_POOL}/subject/ns/ate-system/sa/atelet" \
+    --role roles/storage.objectAdmin >/dev/null
+fi
 
 # --- 8. full ate plane via the static-certs overlay -----------------------------
 # The overlay's ../*.yaml refs resolve inside the upstream tree, so copy it in.
@@ -220,7 +233,7 @@ cat <<EOF
       - session store:   statefulset/valkey-cluster
       - node agent:      daemonset/atelet
       - certs:           static openssl-minted CA + leaf (Secrets in ate-system)
-      - snapshots:       gs://${PROJECT_NAME}-substrate-snapshots (node SA objectAdmin)
+      - snapshots:       gs://${PROJECT_NAME}-substrate-snapshots (node SA + WI atelet objectAdmin)
       - worker image:    ${KO_DOCKER_REPO}/ateom-gvisor:latest
 
     Now deploy the substrate-overcommit feature from the Hub.

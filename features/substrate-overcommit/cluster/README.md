@@ -13,7 +13,9 @@ suspend/resume needs:
   actors and transparently resumes suspended actors on connect.
 - **snapshot bucket** — `gs://${PROJECT_NAME}-substrate-snapshots`, where
   `SuspendActor` writes Full snapshots; the node service account gets
-  `objectAdmin` on it.
+  `objectAdmin` on it, and on Workload Identity clusters the WI principal
+  for `ns/ate-system/sa/atelet` gets the same grant (the atelet DaemonSet
+  does the upload and its GCS calls carry the WI identity, not the node SA).
 
 It is kept out of the Hub's automatic `cluster_dir` apply for the same reasons
 as `substrate-basic`'s prerequisite: the operator images are built from
@@ -75,8 +77,11 @@ the controller/atelet install is identical to `substrate-basic`'s.
 6. Ensure the `ate-api-server-envvars` ConfigMap (valkey address + TLS name,
    K8s JWT issuer URL for this cluster).
 7. Ensure the snapshot bucket `gs://${PROJECT_NAME}-substrate-snapshots` and
-   grant the cluster's node service account `objectAdmin` on it (no Workload
-   Identity on the showcase cluster — snapshot I/O runs as the node SA).
+   grant `objectAdmin` on it to the cluster's node service account AND — when
+   the cluster has a Workload Identity pool — to the WI principal
+   `ns/ate-system/sa/atelet` (the atelet DaemonSet performs the snapshot
+   upload; under GKE_METADATA its GCS calls carry the WI identity, so a
+   node-SA-only grant 403s every suspend and wedges actors in SUSPENDING).
 8. Apply the full plane via the `static-certs/` overlay (`kustomize | ko
    resolve | kubectl apply`). The immutable `valkey-cluster-init` Job is
    deleted first; it no-ops if the valkey cluster is already formed.
