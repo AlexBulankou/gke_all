@@ -219,7 +219,9 @@ async def get_state(db: Session = Depends(database.get_db)):
         {
             "pod": w.worker_pod,
             "node": w.node_name,
-            "assignment": w.assignment or None,
+            "assignment": (
+                w.assignment.actor.name if w.HasField("assignment") else None
+            ),
         }
         for w in workers_resp.workers
         if w.worker_pool == WORKER_POOL
