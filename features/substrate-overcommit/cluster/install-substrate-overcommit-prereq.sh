@@ -54,7 +54,7 @@ command -v openssl >/dev/null || fail preflight "openssl not on PATH (static cer
 [ -f "${SCRIPT_DIR}/static-certs/kustomization.yaml" ] \
   || fail preflight "static-certs overlay not found next to this script"
 
-note "[0/9] cluster credentials + Artifact Registry auth"
+note "[0/10] cluster credentials + Artifact Registry auth"
 gcloud container clusters get-credentials "${CLUSTER}" \
   --region "${REGION}" --project "${PROJECT_NAME}" --quiet \
   || fail preflight "get-credentials failed — does the cluster exist?"
@@ -63,10 +63,10 @@ gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet \
 
 # --- 1. upstream source -------------------------------------------------------
 if [ -n "${UPSTREAM_DIR}" ]; then
-  note "[1/9] using existing upstream checkout: ${UPSTREAM_DIR}"
+  note "[1/10] using existing upstream checkout: ${UPSTREAM_DIR}"
   SRC="${UPSTREAM_DIR}"
 else
-  note "[1/9] cloning ${UPSTREAM_REPO_URL} -> ${WORK_DIR}"
+  note "[1/10] cloning ${UPSTREAM_REPO_URL} -> ${WORK_DIR}"
   rm -rf "${WORK_DIR}"
   git clone --depth 1 "${UPSTREAM_REPO_URL}" "${WORK_DIR}"
   SRC="${WORK_DIR}"
@@ -75,13 +75,13 @@ cd "${SRC}"
 [ -d manifests/ate-install/generated ] || fail source "manifests/ate-install/generated not found — unexpected upstream layout"
 
 # --- 2. CRDs -------------------------------------------------------------------
-note "[2/9] applying ate.dev CRDs"
+note "[2/10] applying ate.dev CRDs"
 ko apply -f manifests/ate-install/generated
 kubectl wait --for=condition=Established --timeout=60s \
   crd/workerpools.ate.dev crd/actortemplates.ate.dev crd/sandboxconfigs.ate.dev
 
 # --- 3. gVisor SandboxConfig + namespace ---------------------------------------
-note "[3/9] applying SandboxConfig validation policy + default gVisor class + ate-system namespace"
+note "[3/10] applying SandboxConfig validation policy + default gVisor class + ate-system namespace"
 kubectl apply -f manifests/ate-install/sandboxconfig-validation.yaml
 kubectl apply -f manifests/ate-install/sandboxconfig-gvisor.yaml
 kubectl apply -f manifests/ate-install/ate-system-namespace.yaml
@@ -100,9 +100,9 @@ done
 # would emit SEC1 ("EC PRIVATE KEY") and be rejected. Bundle order: key, leaf
 # cert, CA cert — the exact PEM sequence credbundle.Parse expects.
 if kubectl get secret servicedns-static-certs -n ate-system >/dev/null 2>&1; then
-  note "[4/9] static-cert Secrets already present — skipping mint"
+  note "[4/10] static-cert Secrets already present — skipping mint"
 else
-  note "[4/9] minting static CA + leaf and creating cert Secrets"
+  note "[4/10] minting static CA + leaf and creating cert Secrets"
   CERT_DIR="$(mktemp -d)"
   trap 'rm -rf "${CERT_DIR}"' EXIT
 
@@ -143,7 +143,7 @@ EXT
 fi
 
 # --- 5. session-id pools (jwt signing + CA pool Secrets) ------------------------
-note "[5/9] ensuring session-id jwt + CA pool Secrets"
+note "[5/10] ensuring session-id jwt + CA pool Secrets"
 kubectl get secret session-id-jwt-pool -n ate-system >/dev/null 2>&1 \
   || go run ./cmd/kubectl-ate admin make-jwt-pool \
        --key-id="1" --name="session-id-jwt-pool" --secret-namespace=ate-system
@@ -152,7 +152,7 @@ kubectl get secret session-id-ca-pool -n ate-system >/dev/null 2>&1 \
        --ca-id="1" --name="session-id-ca-pool" --secret-namespace=ate-system
 
 # --- 6. api-server env vars -----------------------------------------------------
-note "[6/9] ensuring ate-api-server-envvars ConfigMap"
+note "[6/10] ensuring ate-api-server-envvars ConfigMap"
 if ! kubectl get configmap ate-api-server-envvars -n ate-system >/dev/null 2>&1; then
   kubectl create configmap ate-api-server-envvars -n ate-system \
     --from-literal=ATE_API_REDIS_ADDRESS="valkey-cluster.ate-system.svc:6379" \
@@ -162,11 +162,33 @@ if ! kubectl get configmap ate-api-server-envvars -n ate-system >/dev/null 2>&1;
     --from-literal=ATE_API_K8SJWT_ISSUER="https://container.googleapis.com/v1/projects/${PROJECT_NAME}/locations/${REGION}/clusters/${CLUSTER}"
 fi
 
-# --- 7. full ate plane via the static-certs overlay -----------------------------
+# --- 7. snapshot bucket ----------------------------------------------------------
+# SuspendActor takes a FULL snapshot; the feature's ActorTemplate points
+# snapshotsConfig.location at gs://${PROJECT_NAME}-substrate-snapshots/. The
+# snapshot read/write happens from the worker node (no Workload Identity on the
+# showcase cluster), so the node service account gets objectAdmin on this one
+# bucket.
+note "[7/10] ensuring snapshot bucket gs://${PROJECT_NAME}-substrate-snapshots"
+if ! gcloud storage buckets describe "gs://${PROJECT_NAME}-substrate-snapshots" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${PROJECT_NAME}-substrate-snapshots" \
+    --project "${PROJECT_NAME}" --location "${REGION}" \
+    --uniform-bucket-level-access
+fi
+NODE_SA="$(gcloud container clusters describe "${CLUSTER}" --region "${REGION}" \
+  --project "${PROJECT_NAME}" --format 'value(nodeConfig.serviceAccount)')"
+if [ -z "${NODE_SA}" ] || [ "${NODE_SA}" = "default" ]; then
+  PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_NAME}" --format 'value(projectNumber)')"
+  NODE_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+fi
+gcloud storage buckets add-iam-policy-binding \
+  "gs://${PROJECT_NAME}-substrate-snapshots" \
+  --member "serviceAccount:${NODE_SA}" --role roles/storage.objectAdmin >/dev/null
+
+# --- 8. full ate plane via the static-certs overlay -----------------------------
 # The overlay's ../*.yaml refs resolve inside the upstream tree, so copy it in.
 # The valkey-cluster-init Job is immutable — delete before re-apply; it no-ops
 # when the valkey cluster is already formed.
-note "[7/9] applying full ate plane (static-certs overlay)"
+note "[8/10] applying full ate plane (static-certs overlay)"
 rm -rf manifests/ate-install/static-certs
 cp -r "${SCRIPT_DIR}/static-certs" manifests/ate-install/static-certs
 kubectl delete job valkey-cluster-init -n ate-system --ignore-not-found
@@ -174,8 +196,8 @@ kubectl kustomize manifests/ate-install/static-certs --load-restrictor LoadRestr
   | ko resolve -f - \
   | kubectl apply -f -
 
-# --- 8. rollout waits ------------------------------------------------------------
-note "[8/9] waiting for the plane to come up"
+# --- 9. rollout waits ------------------------------------------------------------
+note "[9/10] waiting for the plane to come up"
 kubectl rollout status deployment/ate-api-server-deployment -n ate-system --timeout=300s
 kubectl rollout status deployment/ate-controller            -n ate-system --timeout=300s
 kubectl rollout status deployment/atenet-router             -n ate-system --timeout=300s
@@ -184,8 +206,8 @@ kubectl rollout status statefulset/valkey-cluster           -n ate-system --time
 kubectl rollout status daemonset/atelet                     -n ate-system --timeout=300s
 kubectl wait --for=condition=complete job/valkey-cluster-init -n ate-system --timeout=300s
 
-# --- 9. ateom-gvisor worker image -------------------------------------------------
-note "[9/9] building + pushing ateom-gvisor:latest -> ${KO_DOCKER_REPO}/ateom-gvisor"
+# --- 10. ateom-gvisor worker image ------------------------------------------------
+note "[10/10] building + pushing ateom-gvisor:latest -> ${KO_DOCKER_REPO}/ateom-gvisor"
 ko build --base-import-paths --tags=latest --push ./cmd/ateom-gvisor
 
 cat <<EOF
@@ -198,6 +220,7 @@ cat <<EOF
       - session store:   statefulset/valkey-cluster
       - node agent:      daemonset/atelet
       - certs:           static openssl-minted CA + leaf (Secrets in ate-system)
+      - snapshots:       gs://${PROJECT_NAME}-substrate-snapshots (node SA objectAdmin)
       - worker image:    ${KO_DOCKER_REPO}/ateom-gvisor:latest
 
     Now deploy the substrate-overcommit feature from the Hub.

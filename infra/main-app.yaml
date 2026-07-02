@@ -18,6 +18,12 @@ rules:
 - apiGroups: [""]
   resources: ["namespaces", "services", "serviceaccounts", "secrets", "configmaps", "pods", "pods/log", "nodes"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# The substrate-overcommit router authenticates to the ate-api-server (jwt mode) by
+# minting a token for the ate-client ServiceAccount via the TokenRequest API — a
+# subresource not covered by the plain "serviceaccounts" rule above.
+- apiGroups: [""]
+  resources: ["serviceaccounts/token"]
+  verbs: ["create"]
 - apiGroups: ["apps"]
   resources: ["deployments"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
