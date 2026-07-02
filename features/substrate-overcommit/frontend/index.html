@@ -140,6 +140,16 @@
         .lane-btn:disabled { opacity: 0.35; cursor: not-allowed; }
         .lane-btn.primary { border-color: rgba(56,189,248,0.5); color: var(--cyan-neon, #38bdf8); }
         .lane-btn.danger  { border-color: rgba(248,113,113,0.4); color: #f87171; }
+        .oc-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            margin-bottom: 0.6rem;
+            user-select: none;
+        }
+        .oc-toggle input { accent-color: var(--cyan-neon, #38bdf8); }
         .oc-error {
             color: #ff4444;
             font-size: 0.82rem;
@@ -168,6 +178,9 @@
             a tiny in-RAM counter — <em>Touch</em> bumps it. Suspend a lane, resume it (or just
             Touch it — resume-on-connect), and the count picks up exactly where it left off:
             proof the memory state survived the round-trip while the worker slot was free.
+            With <strong>auto-suspend</strong> on (default), each lane suspends itself the moment
+            its counter bump completes — the slot frees instantly, so rapid Touches across many
+            lanes show live slot churn on the 2-worker pool.
             Every button is a real ate-api-server gRPC call.
         </p>
 
@@ -193,6 +206,11 @@
                 <span class="metric-value" id="kpi-pool">–</span>
             </div>
         </section>
+
+        <label class="oc-toggle">
+            <input type="checkbox" id="auto-suspend" checked>
+            Auto-suspend after touch (frees the worker slot as soon as the counter bump lands)
+        </label>
 
         <div class="oc-error" id="oc-error"></div>
 

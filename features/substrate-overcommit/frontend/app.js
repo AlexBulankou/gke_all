@@ -36,6 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const el = (id) => document.getElementById(id);
     const laneTable = el("lane-table");
     const errBox = el("oc-error");
+    const autoSuspendBox = el("auto-suspend");
 
     // Client-side per-lane memory: last observed count + in-flight action.
     const counts = {};   // lane -> last {"count": N} from Touch
@@ -126,7 +127,10 @@ document.addEventListener("DOMContentLoaded", () => {
         setError("");
         try {
             const method = act === "reset" ? "DELETE" : "POST";
-            const path = act === "reset" ? `${API}/lanes/${lane}` : `${API}/lanes/${lane}/${act}`;
+            let path = act === "reset" ? `${API}/lanes/${lane}` : `${API}/lanes/${lane}/${act}`;
+            if (act === "touch" && autoSuspendBox && !autoSuspendBox.checked) {
+                path += "?auto_suspend=0";
+            }
             const resp = await fetchWithAuth(path, { method });
             if (!resp.ok) {
                 let detail = `${act} failed (${resp.status})`;
