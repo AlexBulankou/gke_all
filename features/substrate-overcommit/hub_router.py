@@ -329,16 +329,24 @@ async def resume_lane(lane: int, db: Session = Depends(database.get_db)):
 
 
 @router.post("/lanes/{lane}/touch")
-async def touch_lane(lane: int, db: Session = Depends(database.get_db)):
+async def touch_lane(
+    lane: int, auto_suspend: bool = True, db: Session = Depends(database.get_db)
+):
     """Bump the actor's in-RAM counter via the atenet-router data path.
 
     This is the state-preservation proof: the router proxies to the actor
     (transparently resuming it if suspended), the actor increments its
     in-memory counter and returns {"count": N}. After suspend -> resume the
     count continues the sequence.
+
+    With auto_suspend (the default), the lane is suspended as soon as the
+    counter bump completes — the worker slot frees immediately, so rapid
+    touches across many lanes show live slot churn on a 2-worker pool.
+    The suspend is best-effort: a lane already suspending/deleted doesn't
+    fail the touch that succeeded.
     """
     if config.MODE == "MOCK":
-        return {"lane": lane, "count": 42, "mock": True}
+        return {"lane": lane, "count": 42, "auto_suspended": auto_suspend, "mock": True}
     name = _lane_name(lane)
     _require_namespace(db)
     host = f"{name}{ACTOR_HOST_SUFFIX}"
@@ -358,7 +366,26 @@ async def touch_lane(lane: int, db: Session = Depends(database.get_db)):
         raise HTTPException(
             status_code=502, detail="actor returned a non-counter response"
         )
-    return {"lane": lane, "name": name, "count": count}
+
+    auto_suspended = False
+    if auto_suspend:
+        stub = await _get_stub()
+        md = await _auth_metadata()
+        try:
+            await stub.SuspendActor(
+                ateapi_pb2.SuspendActorRequest(actor_ref=_actor_ref(name)),
+                metadata=md,
+            )
+            auto_suspended = True
+        except grpc.aio.AioRpcError as e:
+            if e.code() not in (
+                grpc.StatusCode.FAILED_PRECONDITION,
+                grpc.StatusCode.NOT_FOUND,
+                grpc.StatusCode.ALREADY_EXISTS,
+            ):
+                raise _grpc_http_error(e)
+
+    return {"lane": lane, "name": name, "count": count, "auto_suspended": auto_suspended}
 
 
 @router.delete("/lanes/{lane}")
